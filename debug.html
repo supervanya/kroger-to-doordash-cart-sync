@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cart sync · Debug</title>
+  <style>
+    :root { --fg:#1b1b1f; --muted:#6b6b76; --line:#e4e4ea; --bg:#fff; --panel:#f6f6f8; --bad:#c62828; }
+    @media (prefers-color-scheme: dark) { :root { --fg:#ececf1; --muted:#9a9aa6; --line:#33333b; --bg:#1b1b1f; --panel:#24242a; } }
+    body { font: 13px/1.45 -apple-system, system-ui, sans-serif; color:var(--fg); background:var(--bg); margin:0; padding:20px 24px 40px; }
+    h1 { font-size:18px; margin:0 0 4px; }
+    h2 { font-size:14px; margin:28px 0 8px; }
+    .muted { color:var(--muted); }
+    code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--panel); padding:1px 5px; border-radius:4px; }
+    .stats { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0; }
+    .stat { background:var(--panel); border-radius:8px; padding:8px 12px; min-width:120px; }
+    .stat b { display:block; font-size:18px; }
+    .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
+    input[type=search] { flex:1; min-width:220px; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+    button { padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); cursor:pointer; }
+    button:hover { border-color:var(--muted); }
+    button.danger { color:var(--bad); }
+    .wrap { overflow-x:auto; }
+    table { border-collapse:collapse; width:100%; }
+    th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+    th { font-weight:600; color:var(--muted); position:sticky; top:0; background:var(--bg); }
+    td.name { white-space:normal; min-width:240px; }
+    td.num { font-variant-numeric: tabular-nums; }
+    pre { background:var(--panel); border-radius:8px; padding:12px; overflow:auto; max-height:360px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>Cart sync · Debug</h1>
+  <div class="muted">
+    Saved in <code>chrome.storage.local</code> under key <code>cache</code> (durable).
+    Saved carts are under key <code>savedCarts</code> (durable).
+    The pending preview plan is in <code>chrome.storage.session</code> under key <code>plan</code> (cleared when the browser closes).
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <div class="bar">
+    <button id="refresh">Refresh</button>
+    <button id="copy">Copy cache JSON</button>
+    <button id="clear" class="danger">Clear match cache</button>
+    <span id="msg" class="muted"></span>
+  </div>
+
+  <h2>Last run <span class="muted" id="lastRunMeta"></span></h2>
+  <div class="muted">How long each step of the most recent operation took (kept until the browser closes).</div>
+  <div class="wrap">
+    <table>
+      <thead><tr><th>Step</th><th>Time</th></tr></thead>
+      <tbody id="lastRun"></tbody>
+    </table>
+  </div>
+
+  <h2>Saved matches <span class="muted" id="matchCount"></span></h2>
+  <div class="bar"><input type="search" id="filter" placeholder="Filter by name, UPC or DoorDash id…" /></div>
+  <div class="wrap">
+    <table>
+      <thead><tr><th>Name (DoorDash)</th><th>UPC / Kroger id</th><th>DoorDash item id</th><th>Menu id</th><th>Price</th><th>Purchase type</th><th></th></tr></thead>
+      <tbody id="matches"></tbody>
+    </table>
+  </div>
+
+  <h2>Not sold at DoorDash <span class="muted" id="nfCount"></span></h2>
+  <div class="muted">Skipped when searching until 7 days after the last check.</div>
+  <div class="wrap">
+    <table>
+      <thead><tr><th>UPC / Kroger id</th><th>Last checked</th><th>Rechecked after</th><th></th></tr></thead>
+      <tbody id="notFound"></tbody>
+    </table>
+  </div>
+
+  <h2>Saved carts <span class="muted" id="savedCount"></span></h2>
+  <pre id="savedCarts"></pre>
+
+  <h2>Pending preview plan</h2>
+  <pre id="plan"></pre>
+
+  <h2>Raw cache</h2>
+  <pre id="raw"></pre>
+
+  <script src="debug.js"></script>
+</body>
+</html>

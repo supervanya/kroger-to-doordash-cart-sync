@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root { --fg:#1b1b1f; --muted:#6b6b76; --line:#e4e4ea; --bg:#fff; --panel:#f6f6f8; --kr:#0f4ea6; --dd:#eb1700; --ok:#1a7f37; --warn:#9a6700; --bad:#c62828; }
+    @media (prefers-color-scheme: dark) { :root { --fg:#ececf1; --muted:#9a9aa6; --line:#33333b; --bg:#1b1b1f; --panel:#24242a; } }
+    body { font: 13px/1.4 -apple-system, system-ui, sans-serif; color:var(--fg); background:var(--bg); margin:0; width:440px; }
+    section { padding:12px 14px; border-bottom:1px solid var(--line); }
+    h1 { font-size:14px; margin:0 0 10px; }
+    h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; margin:12px 0 4px; }
+    h3 { font-size:13px; margin:0 0 8px; }
+    button { font:inherit; color:var(--fg); }
+    .row { display:flex; gap:8px; align-items:center; }
+    .big { flex:1; padding:9px 6px; border-radius:8px; border:1px solid var(--line); background:transparent; font-weight:600; cursor:pointer; }
+    .big:hover, .small:hover { border-color:var(--muted); }
+    .small { padding:4px 8px; border-radius:6px; border:1px solid var(--line); background:transparent; cursor:pointer; font-size:12px; }
+    .small.danger { color:var(--bad); }
+    .kr { color:var(--kr); } .dd { color:var(--dd); }
+    .muted { color:var(--muted); }
+    #status { padding:8px 14px 0; color:var(--muted); min-height:18px; }
+    #status.err { color:var(--bad); }
+    #diff { max-height:300px; overflow:auto; }
+    h2.add { color:var(--ok); } h2.change { color:var(--kr); } h2.remove { color:var(--bad); } h2.unmatched, h2.untouched { color:var(--warn); }
+    ul { list-style:none; margin:0; padding:0; }
+    li { display:flex; justify-content:space-between; gap:10px; padding:3px 0; border-bottom:1px solid var(--line); }
+    li .n { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    li .q { color:var(--muted); white-space:nowrap; }
+    li .why { display:block; color:var(--muted); font-size:11px; white-space:normal; }
+    #apply { padding:8px 14px; border-radius:8px; border:0; background:var(--fg); color:var(--bg); font-weight:600; cursor:pointer; }
+    #apply:disabled { opacity:.35; cursor:default; }
+    .applyRow { margin-top:10px; }
+    input[type=text] { flex:1; min-width:0; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+    select { padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); font-size:12px; }
+    details { border:1px solid var(--line); border-radius:8px; margin-top:8px; }
+    summary { list-style:none; cursor:pointer; padding:8px 10px; display:flex; justify-content:space-between; gap:8px; }
+    summary::-webkit-details-marker { display:none; }
+    summary .title { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    summary .meta { color:var(--muted); font-size:12px; white-space:nowrap; }
+    .cartBody { padding:0 10px 10px; }
+    .cartBody ul { max-height:180px; overflow:auto; margin-bottom:8px; }
+    .badge { font-size:11px; font-weight:600; padding:1px 6px; border-radius:10px; background:var(--panel); margin-right:6px; }
+    .actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+    .actions .spacer { flex:1; }
+    footer { display:flex; gap:12px; justify-content:flex-end; padding:8px 14px 10px; }
+    .link { background:none; border:0; color:var(--muted); cursor:pointer; font-size:11px; text-decoration:underline; padding:0; }
+  </style>
+</head>
+<body>
+  <section>
+    <h1>Cart sync · Kroger ⇄ DoorDash</h1>
+    <div class="row">
+      <button class="big" data-dir="k2d"><span class="kr">Kroger</span> → <span class="dd">DoorDash</span></button>
+      <button class="big" data-dir="d2k"><span class="dd">DoorDash</span> → <span class="kr">Kroger</span></button>
+    </div>
+  </section>
+
+  <div id="status">Pick a direction or a saved cart to preview. Nothing changes until you confirm.</div>
+  <section id="previewSection" hidden>
+    <div id="diff"></div>
+    <div class="row applyRow"><button id="apply" disabled>Apply changes</button></div>
+  </section>
+
+  <section>
+    <h3>Saved carts</h3>
+    <div class="row">
+      <input type="text" id="saveName" placeholder="Name (optional), e.g. Weekly staples" />
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="small" data-save="kroger">Save <span class="kr">Kroger</span> cart</button>
+      <button class="small" data-save="doordash">Save <span class="dd">DoorDash</span> cart</button>
+    </div>
+    <div id="saved"></div>
+  </section>
+
+  <footer>
+    <button id="debug" class="link" title="See saved matches and where they're stored">Debug</button>
+    <button id="clear" class="link" title="Forget saved item matches">Clear match cache</button>
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>

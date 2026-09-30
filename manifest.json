@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Kroger ⇄ DoorDash Cart Sync",
+  "version": "0.1.0",
+  "description": "Mirror your Kroger cart to the DoorDash Kroger store (and back), matched by exact UPC.",
+  "permissions": ["scripting", "tabs", "storage"],
+  "host_permissions": ["https://www.kroger.com/*", "https://www.doordash.com/*"],
+  "action": { "default_title": "Cart sync", "default_popup": "popup.html" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.kroger.com/*"],
+      "js": ["content/kroger-laf-capture.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}
