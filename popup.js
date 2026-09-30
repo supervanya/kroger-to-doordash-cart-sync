@@ -13,7 +13,7 @@ let ticker = null;
 let shownEnd = null; // startedAt of the finished job already rendered (don't redo one-time effects)
 
 function setBusy(on) {
-  document.querySelectorAll('[data-dir], [data-save], [data-act="add"], [data-act="restore"]').forEach((b) => { b.disabled = on; });
+  document.querySelectorAll('[data-dir], [data-clear], [data-save], [data-act="add"], [data-act="restore"]').forEach((b) => { b.disabled = on; });
   if (on) $('#apply').disabled = true;
 }
 
@@ -69,8 +69,14 @@ function render({ target, diff }) {
 
 async function showPreview(r) {
   const n = render(r);
-  const verb = r.mode === 'add' ? `add ${r.label} to ${STORE[r.target]}` : `make ${STORE[r.target]} match ${r.label}`;
-  status(n ? `${n} change${n === 1 ? '' : 's'} to ${verb} (${secs(r.ms)}).` : `Nothing to do: ${STORE[r.target]} already has it (${secs(r.ms)}).`);
+  if (r.mode === 'clear') {
+    status(n
+      ? `Apply to remove all ${n} item${n === 1 ? '' : 's'} from ${r.label}. Tip: save the cart first if you might want it back.`
+      : `${r.label[0].toUpperCase()}${r.label.slice(1)} is already empty.`);
+  } else {
+    const verb = r.mode === 'add' ? `add ${r.label} to ${STORE[r.target]}` : `make ${STORE[r.target]} match ${r.label}`;
+    status(n ? `${n} change${n === 1 ? '' : 's'} to ${verb} (${secs(r.ms)}).` : `Nothing to do: ${STORE[r.target]} already has it (${secs(r.ms)}).`);
+  }
   // The plan to apply is kept separately; it's gone once applied.
   const { plan } = await chrome.storage.session.get('plan');
   $('#apply').disabled = n === 0 || !plan;
@@ -91,6 +97,9 @@ function preview(msg) {
 
 document.querySelectorAll('[data-dir]').forEach((b) =>
   b.addEventListener('click', () => preview({ cmd: 'preview', dir: b.dataset.dir })));
+
+document.querySelectorAll('[data-clear]').forEach((b) =>
+  b.addEventListener('click', () => preview({ cmd: 'previewClear', target: b.dataset.clear })));
 
 $('#apply').addEventListener('click', () => {
   $('#apply').disabled = true;

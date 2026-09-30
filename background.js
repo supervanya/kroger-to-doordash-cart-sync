@@ -396,7 +396,35 @@ async function previewSaved(ctx, { id, target, mode }) {
   return buildPlan(ctx, { target, source: toCartMap(cart.items), mode, redo: { kind: 'saved', id, target, mode }, label: `“${cart.name}”` });
 }
 
-const rebuild = (ctx, redo) => (redo.kind === 'sync' ? previewSync(ctx, redo.dir) : previewSaved(ctx, redo));
+// ---------- clear a cart ----------
+
+/**
+ * Plan removing every line from one store's cart. No item matching (so no DoorDash searching):
+ * each line is keyed by its own line id, which apply() removes like any other "remove".
+ * Unidentified DoorDash items are included, unlike in syncs.
+ */
+async function previewClear(ctx, target) {
+  const plan = { target, mode: 'clear', redo: { kind: 'clear', target }, label: `your ${STORE_NAME[target]} cart` };
+  let remove;
+  if (target === 'doordash') {
+    const d = await ctx.step('Reading your DoorDash cart', async () => run(await ctx.dTab(), ddReadCart, [DD_STORE_ID], { retry: true }));
+    const dLines = d.lines.map((l) => ({ ...l, gtin: `line:${l.lineId}` }));
+    remove = dLines.map((l) => ({ gtin: l.gtin, name: l.name, qty: l.qty }));
+    Object.assign(plan, { dCartId: d.cartId, dLines, counts: { target: dLines.length } });
+  } else {
+    const k = await readKroger(ctx);
+    const names = await krNames(ctx, [...new Set(k.lines.map((l) => l.gtin))]);
+    remove = [...toCartMap(k.lines.map((l) => ({ gtin: l.gtin, qty: l.qty, name: names[l.gtin]?.name || l.gtin })))]
+      .map(([gtin, v]) => ({ gtin, name: v.name, qty: v.qty }));
+    Object.assign(plan, { kCartId: k.cartId, kLines: k.lines, counts: { target: k.lines.length } });
+  }
+  plan.diff = { add: [], change: [], remove, unmatched: [], untouched: [] };
+  await chrome.storage.session.set({ plan });
+  return { target, mode: 'clear', label: plan.label, diff: plan.diff, counts: plan.counts };
+}
+
+const rebuild = (ctx, redo) => (redo.kind === 'sync' ? previewSync(ctx, redo.dir)
+  : redo.kind === 'clear' ? previewClear(ctx, redo.target) : previewSaved(ctx, redo));
 
 // ---------- apply ----------
 
@@ -479,6 +507,7 @@ const op = (kind, desc, fn) => startJob(kind, desc, () => withCtx(desc, fn));
 
 const handlers = {
   preview: (msg) => op('preview', `Sync preview (${msg.dir === 'k2d' ? 'Kroger → DoorDash' : 'DoorDash → Kroger'})`, timed((ctx) => previewSync(ctx, msg.dir))),
+  previewClear: (msg) => op('preview', `Clear ${STORE_NAME[msg.target]} cart (preview)`, timed((ctx) => previewClear(ctx, msg.target))),
   previewSaved: (msg) => op('preview', `Saved cart preview (${msg.mode === 'add' ? 'add to' : 'restore'} ${STORE_NAME[msg.target]})`, timed((ctx) => previewSaved(ctx, msg))),
   apply: () => op('apply', 'Apply changes', apply),
   saveCart: (msg) => op('save', `Save ${STORE_NAME[msg.source]} cart`, (ctx) => saveCart(ctx, msg.source, msg.name)),

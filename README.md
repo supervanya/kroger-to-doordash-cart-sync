@@ -35,6 +35,13 @@ popup to see its progress, or the finished preview with **Apply changes** ready.
 operation runs at a time. The last result is kept until you start another operation or close
 the browser.
 
+## Clear a cart
+
+**Clear Kroger cart** / **Clear DoorDash cart** previews removing every item from that cart,
+including DoorDash items the extension can't identify. Nothing is deleted until you click
+**Apply changes**. Clearing doesn't match items, so it needs no DoorDash searching. Save the cart
+first if you might want it back.
+
 ## Saved carts
 
 Save a snapshot of either cart and apply it later to **either** store. Items are stored by UPC,
