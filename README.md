@@ -30,6 +30,11 @@ DoorDash **Kroger (7350 N Middlebelt Rd)** store cart. It works in either direct
 
 If a Kroger or DoorDash tab isn't open, the extension opens one in the background.
 
+You can close the popup at any time. The work keeps running in the background. Reopen the
+popup to see its progress, or the finished preview with **Apply changes** ready. Only one
+operation runs at a time. The last result is kept until you start another operation or close
+the browser.
+
 ## Saved carts
 
 Save a snapshot of either cart and apply it later to **either** store. Items are stored by UPC,

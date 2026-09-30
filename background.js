@@ -116,8 +116,41 @@ const byWeight = (purchaseType) => purchaseType === 'PURCHASE_TYPE_MEASUREMENT';
 
 // ---------- per-operation context: lazy tabs, cache, one "Buy it again" fetch ----------
 
-/** Tell any open popup / debug page what's happening (no listener is fine). */
-const broadcast = (msg) => chrome.runtime.sendMessage(msg).catch(() => {});
+// ---------- the current operation ("job"), persisted so the popup can close and reopen ----------
+// session.job: {kind:'preview'|'apply'|'save', desc, status:'running'|'done'|'error', label, startedAt,
+//               updatedAt, result?, error?}. The popup renders purely from this.
+
+let job = null;
+const JOB_STALE_MS = 120000; // a "running" job not updated for this long died with the worker
+const saveJob = () => chrome.storage.session.set({ job });
+
+/** Record the step now running (shown live in the popup, even after it's reopened). */
+function setProgress(label) {
+  if (!job || job.status !== 'running') return;
+  job = { ...job, label, updatedAt: Date.now() };
+  saveJob();
+}
+
+class Busy extends Error {}
+
+async function startJob(kind, desc, fn) {
+  const { job: current } = await chrome.storage.session.get('job');
+  if (current?.status === 'running' && Date.now() - current.updatedAt < JOB_STALE_MS) {
+    throw new Busy(`Still working on: ${current.desc}. Wait for it to finish.`);
+  }
+  job = { kind, desc, status: 'running', label: desc, startedAt: Date.now(), updatedAt: Date.now() };
+  await saveJob();
+  try {
+    const result = await fn();
+    job = { ...job, status: 'done', result, updatedAt: Date.now() };
+    return result;
+  } catch (e) {
+    job = { ...job, status: 'error', error: e.message, updatedAt: Date.now() };
+    throw e;
+  } finally {
+    await saveJob();
+  }
+}
 
 function makeCtx(cache, op) {
   const tabs = {};
@@ -128,7 +161,7 @@ function makeCtx(cache, op) {
     log,
     /** Run one named step: shown live in the popup, timed in the Debug page's "Last run". */
     step: async (label, fn) => {
-      broadcast({ type: 'progress', text: label });
+      setProgress(label);
       const t0 = Date.now();
       const entry = { label, ms: 0 };
       log.steps.push(entry);
@@ -431,7 +464,7 @@ async function apply(ctx) {
 
   await chrome.storage.session.remove('plan');
   // Verify by rebuilding the same preview against the updated cart.
-  broadcast({ type: 'progress', text: 'Checking the result' });
+  setProgress('Checking the result');
   const after = await rebuild(ctx, plan.redo);
   const remaining = after.diff.add.length + after.diff.change.length + after.diff.remove.length;
   return { failures, remaining, after, ms: Date.now() - t0 };
@@ -441,11 +474,14 @@ async function apply(ctx) {
 
 const timed = (fn) => async (ctx) => { const t0 = Date.now(); const r = await fn(ctx); return { ...r, ms: Date.now() - t0 }; };
 
+/** A cart operation: runs as the persisted job, with a step log for the Debug page. */
+const op = (kind, desc, fn) => startJob(kind, desc, () => withCtx(desc, fn));
+
 const handlers = {
-  preview: (msg) => withCtx(`Sync preview (${msg.dir === 'k2d' ? 'Kroger → DoorDash' : 'DoorDash → Kroger'})`, timed((ctx) => previewSync(ctx, msg.dir))),
-  previewSaved: (msg) => withCtx(`Saved cart preview (${msg.mode === 'add' ? 'add to' : 'restore'} ${STORE_NAME[msg.target]})`, timed((ctx) => previewSaved(ctx, msg))),
-  apply: () => withCtx('Apply changes', apply),
-  saveCart: (msg) => withCtx(`Save ${STORE_NAME[msg.source]} cart`, (ctx) => saveCart(ctx, msg.source, msg.name)),
+  preview: (msg) => op('preview', `Sync preview (${msg.dir === 'k2d' ? 'Kroger → DoorDash' : 'DoorDash → Kroger'})`, timed((ctx) => previewSync(ctx, msg.dir))),
+  previewSaved: (msg) => op('preview', `Saved cart preview (${msg.mode === 'add' ? 'add to' : 'restore'} ${STORE_NAME[msg.target]})`, timed((ctx) => previewSaved(ctx, msg))),
+  apply: () => op('apply', 'Apply changes', apply),
+  saveCart: (msg) => op('save', `Save ${STORE_NAME[msg.source]} cart`, (ctx) => saveCart(ctx, msg.source, msg.name)),
   listSaved: () => loadSaved(),
   deleteSaved: async (msg) => { await storeSaved((await loadSaved()).filter((c) => c.id !== msg.id)); return { ok: true }; },
   clearCache: async () => { await chrome.storage.local.remove('cache'); return { ok: true }; },
@@ -454,6 +490,8 @@ const handlers = {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const handler = handlers[msg.cmd];
   if (!handler) return false;
-  handler(msg).then((result) => sendResponse({ ok: true, result })).catch((e) => sendResponse({ ok: false, error: e.message }));
+  handler(msg)
+    .then((result) => sendResponse({ ok: true, result }))
+    .catch((e) => sendResponse({ ok: false, error: e.message, busy: e instanceof Busy }));
   return true;
 });

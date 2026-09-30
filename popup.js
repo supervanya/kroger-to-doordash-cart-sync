@@ -5,22 +5,46 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 const STORE = { kroger: 'Kroger', doordash: 'DoorDash' };
 const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
 
-// While a request runs, show the background's current step with a running timer.
-let busyLabel = '';
-chrome.runtime.onMessage.addListener((m) => { if (m.type === 'progress') busyLabel = m.text; });
+// ---------- the current operation ----------
+// The background keeps the current job (running / done / error) in session storage, so the popup
+// can be closed mid-operation: on reopen it picks up the progress, or shows the finished result.
 
-async function busy(msg, text) {
-  busyLabel = text;
-  const t0 = Date.now();
-  const tick = () => status(`${busyLabel}… ${Math.floor((Date.now() - t0) / 1000)}s`);
-  tick();
-  const timer = setInterval(tick, 250);
-  try {
-    return await send(msg);
-  } finally {
-    clearInterval(timer);
-  }
+let ticker = null;
+let shownEnd = null; // startedAt of the finished job already rendered (don't redo one-time effects)
+
+function setBusy(on) {
+  document.querySelectorAll('[data-dir], [data-save], [data-act="add"], [data-act="restore"]').forEach((b) => { b.disabled = on; });
+  if (on) $('#apply').disabled = true;
 }
+
+async function showJob(job) {
+  clearInterval(ticker);
+  if (!job) return;
+  if (job.status === 'running') {
+    setBusy(true);
+    const tick = () => status(`${job.label}… ${Math.floor((Date.now() - job.startedAt) / 1000)}s`);
+    tick();
+    ticker = setInterval(tick, 250);
+    return;
+  }
+  setBusy(false);
+  if (job.status === 'error') return status(job.error, true);
+  const first = shownEnd !== job.startedAt;
+  shownEnd = job.startedAt;
+  if (job.kind === 'preview') await showPreview(job.result);
+  else if (job.kind === 'apply') showApplied(job.result);
+  else if (job.kind === 'save') await showSaved(job.result, first);
+}
+
+/** Start an operation. Results arrive through the job in session storage, not this reply. */
+async function start(msg) {
+  const res = await send(msg);
+  if (!res.ok && res.busy) status(res.error, true);
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session' && changes.job) showJob(changes.job.newValue);
+});
 
 // ---------- preview / apply ----------
 
@@ -43,31 +67,34 @@ function render({ target, diff }) {
   return diff.add.length + diff.change.length + diff.remove.length;
 }
 
-async function preview(msg, busyText) {
-  $('#apply').disabled = true;
-  $('#previewSection').hidden = true;
-  const res = await busy(msg, busyText);
-  if (!res.ok) return status(res.error, true);
-  const r = res.result;
+async function showPreview(r) {
   const n = render(r);
   const verb = r.mode === 'add' ? `add ${r.label} to ${STORE[r.target]}` : `make ${STORE[r.target]} match ${r.label}`;
   status(n ? `${n} change${n === 1 ? '' : 's'} to ${verb} (${secs(r.ms)}).` : `Nothing to do: ${STORE[r.target]} already has it (${secs(r.ms)}).`);
-  $('#apply').disabled = n === 0;
-  $('#previewSection').scrollIntoView({ block: 'nearest' });
+  // The plan to apply is kept separately; it's gone once applied.
+  const { plan } = await chrome.storage.session.get('plan');
+  $('#apply').disabled = n === 0 || !plan;
 }
 
-document.querySelectorAll('[data-dir]').forEach((b) =>
-  b.addEventListener('click', () => preview({ cmd: 'preview', dir: b.dataset.dir }, 'Reading both carts')));
-
-$('#apply').addEventListener('click', async () => {
-  $('#apply').disabled = true;
-  const res = await busy({ cmd: 'apply' }, 'Applying');
-  if (!res.ok) return status(res.error, true);
-  const { failures, remaining, after, ms } = res.result;
+function showApplied({ failures, remaining, after, ms }) {
   render(after);
+  $('#apply').disabled = true;
   if (failures.length) status(`${failures.length} failed: ${failures.map((f) => `${f.name} (${f.error})`).join('; ')}`, true);
   else if (remaining) status(`Applied, but ${remaining} difference${remaining === 1 ? '' : 's'} remain (shown below).`, true);
   else status(`Done (${secs(ms)}).`);
+}
+
+function preview(msg) {
+  $('#previewSection').hidden = true;
+  start(msg);
+}
+
+document.querySelectorAll('[data-dir]').forEach((b) =>
+  b.addEventListener('click', () => preview({ cmd: 'preview', dir: b.dataset.dir })));
+
+$('#apply').addEventListener('click', () => {
+  $('#apply').disabled = true;
+  start({ cmd: 'apply' });
 });
 
 // ---------- saved carts ----------
@@ -108,16 +135,17 @@ async function loadSaved() {
   if (res.ok) renderSaved(res.result);
 }
 
+async function showSaved(c, first) {
+  status(`Saved “${c.name}” (${c.items.length} items${c.skipped.length ? `, ${c.skipped.length} unidentified skipped` : ''}).`);
+  await // Restore whatever was happening when the popup was last closed.
+loadSaved().then(() => chrome.storage.session.get('job')).then(({ job }) => showJob(job));
+  if (first) document.querySelector(`details[data-id="${CSS.escape(c.id)}"]`)?.setAttribute('open', '');
+}
+
 document.querySelectorAll('[data-save]').forEach((b) =>
-  b.addEventListener('click', async () => {
-    const source = b.dataset.save;
-    const res = await busy({ cmd: 'saveCart', source, name: $('#saveName').value.trim() }, `Saving your ${STORE[source]} cart`);
-    if (!res.ok) return status(res.error, true);
-    const c = res.result;
+  b.addEventListener('click', () => {
+    start({ cmd: 'saveCart', source: b.dataset.save, name: $('#saveName').value.trim() });
     $('#saveName').value = '';
-    status(`Saved “${c.name}” (${c.items.length} items${c.skipped.length ? `, ${c.skipped.length} unidentified skipped` : ''}).`);
-    await loadSaved();
-    document.querySelector(`details[data-id="${CSS.escape(c.id)}"]`)?.setAttribute('open', '');
   }));
 
 $('#saved').addEventListener('click', async (e) => {
@@ -128,11 +156,12 @@ $('#saved').addEventListener('click', async (e) => {
   if (act === 'delete') {
     if (!confirm(`Delete saved cart “${box.dataset.name}”?`)) return;
     await send({ cmd: 'deleteSaved', id });
-    return loadSaved();
+    return // Restore whatever was happening when the popup was last closed.
+loadSaved().then(() => chrome.storage.session.get('job')).then(({ job }) => showJob(job));
   }
   const target = box.querySelector('[data-target]').value;
   const mode = act === 'restore' ? 'mirror' : 'add';
-  preview({ cmd: 'previewSaved', id, target, mode }, `Comparing with your ${STORE[target]} cart`);
+  preview({ cmd: 'previewSaved', id, target, mode });
 });
 
 // ---------- misc ----------
@@ -143,4 +172,5 @@ $('#clear').addEventListener('click', async () => {
   status('Match cache cleared.');
 });
 
-loadSaved();
+// Restore whatever was happening when the popup was last closed.
+loadSaved().then(() => chrome.storage.session.get('job')).then(({ job }) => showJob(job));
