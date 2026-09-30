@@ -1,12 +1,14 @@
 import { computeDiff, toCartMap, stripSize } from './lib/sync.js';
 import { krReadCart, krProducts, krWrite } from './lib/kroger.js';
-import { ddReadCart, ddSearch, ddReorder, ddApply } from './lib/doordash.js';
+import { ddReadCart, ddPageItems, ddApply } from './lib/doordash.js';
 
 const DD_STORE_ID = '36030895'; // Kroger, 7350 N Middlebelt Rd (DoorDash)
 const DD_BUSINESS_ID = '12931039'; // Kroger on DoorDash
 const KR_URL = 'https://www.kroger.com/cart';
 const DD_URL = `https://www.doordash.com/convenience/store/${DD_STORE_ID}?pickup=false`;
 const STORE_NAME = { kroger: 'Kroger', doordash: 'DoorDash' };
+const storePath = (p) => `/convenience/store/${DD_STORE_ID}${p}`;
+const LIST_CHUNK = 30; // terms per "Shop your list" request (~9 s and ~4 MB of HTML per 30 terms)
 
 // ---------- tabs & injection ----------
 
@@ -136,8 +138,10 @@ function makeCtx(cache, op) {
     dTab: () => (tabs.d ||= ctx.step('Connecting to the DoorDash tab', () => ensureTab('https://www.doordash.com/*', DD_URL))),
     // The "Buy it again" page is large (~4 MB): fetch it at most once per operation, only on a cache miss.
     loadReorder: () => (reorder ||= ctx.dTab()
-      .then((t) => ctx.step('Loading your DoorDash "Buy it again" list', () => run(t, ddReorder, [DD_STORE_ID], { retry: true })))
-      .then((items) => cacheItems(cache, items))),
+      .then((t) => ctx.step('Loading your DoorDash "Buy it again" list',
+        () => run(t, ddPageItems, [storePath('/collection/reorder?collectionType=reorder')], { retry: true })))
+      .then((res) => cacheItems(cache, res.items || []))
+      .catch(() => {})), // best effort: list search still works without it
   };
   return ctx;
 }
@@ -156,20 +160,30 @@ async function withCtx(op, fn) {
   }
 }
 
+// "Shop your list" splits terms on commas and newlines; ® and ™ only hurt matching.
+const listTerm = (name) => name.replace(/[®™*]/g, '').replace(/[,\n]/g, ' ').replace(/\s+/g, ' ').trim();
+const base64Utf8 = (str) => btoa(String.fromCharCode(...new TextEncoder().encode(str)));
+
 /**
- * Search DoorDash one query at a time, paced from here (not inside the tab, where Chrome
- * throttles timers). Every item seen is cached, not just the ones asked for: later lookups get free hits.
+ * Search DoorDash for many items at once via its "Shop your list" page
+ * (`/list?search_terms=<base64 JSON array>`): one page request per LIST_CHUNK terms, instead of
+ * one rate-limited GraphQL search per item. Every item on the results page is cached.
  */
-async function search(ctx, queries) {
+async function listSearch(ctx, names) {
+  const terms = [...new Set(names.map(listTerm).filter(Boolean))];
+  if (!terms.length) return;
   const dTab = await ctx.dTab();
-  for (const [i, query] of queries.entries()) {
-    const label = queries.length > 1 ? `Searching DoorDash (${i + 1}/${queries.length}): ${query}` : `Searching DoorDash: ${query}`;
-    const res = await ctx.step(label, () => run(dTab, ddSearch, [DD_STORE_ID, query], { retry: true }));
+  const chunks = Math.ceil(terms.length / LIST_CHUNK);
+  for (let i = 0; i < terms.length; i += LIST_CHUNK) {
+    const chunk = terms.slice(i, i + LIST_CHUNK);
+    const label = `Searching DoorDash for ${chunk.length} item${chunk.length === 1 ? '' : 's'} at once`
+      + (chunks > 1 ? ` (${i / LIST_CHUNK + 1}/${chunks})` : '');
+    const path = storePath(`/list?search_terms=${encodeURIComponent(base64Utf8(JSON.stringify(chunk)))}`);
+    const res = await ctx.step(label, () => run(dTab, ddPageItems, [path], { retry: true, timeoutMs: 90000 }));
     if (res.retryAfter) {
       throw new Error(`DoorDash is rate-limiting requests. Matches found so far are saved. Try again in ~${Math.ceil(res.retryAfter / 60)} min.`);
     }
     cacheItems(ctx.cache, res.items);
-    await sleep(250);
   }
 }
 
@@ -201,22 +215,20 @@ async function readKroger(ctx) {
 
 /**
  * DoorDash cart with each line resolved to a gtin13 (null if unidentified). The cart has no UPCs,
- * so for item ids we haven't seen: the "Buy it again" page first, then a name search per line.
+ * so for item ids we haven't seen: the "Buy it again" page first, then one bulk list search.
  */
 async function readDoorDash(ctx) {
   const dTab = await ctx.dTab();
   const d = await ctx.step('Reading your DoorDash cart', () => run(dTab, ddReadCart, [DD_STORE_ID], { retry: true }));
   const missing = d.lines.filter((l) => !ctx.cache.byDdId[l.itemId]);
   if (missing.length) await ctx.loadReorder();
-  for (const l of missing) {
-    if (!ctx.cache.byDdId[l.itemId]) await search(ctx, [stripSize(l.name)]);
-  }
+  await listSearch(ctx, missing.filter((l) => !ctx.cache.byDdId[l.itemId]).map((l) => stripSize(l.name)));
   return { cartId: d.cartId, lines: d.lines.map((l) => ({ ...l, gtin: ctx.cache.byDdId[l.itemId] || null })) };
 }
 
 /**
  * Make sure every gtin has a DoorDash item in the cache if DoorDash sells it: the "Buy it again"
- * page first, then name searches. `names` (gtin -> {name, brand}) supplies the search text.
+ * page first, then a bulk list search by name. `names` (gtin -> {name, brand}) supplies the search text.
  */
 async function resolveAtDoorDash(ctx, gtins, names = {}) {
   const { cache } = ctx;
@@ -227,16 +239,13 @@ async function resolveAtDoorDash(ctx, gtins, names = {}) {
   if (!missing.length) return;
   const noName = missing.filter((g) => !names[g]?.name);
   if (noName.length) names = { ...names, ...(await krNames(ctx, noName)) };
-  // One at a time, skipping items a previous search already surfaced.
-  for (const g of missing) {
-    if (!cache.byGtin[g]) await search(ctx, [names[g]?.name || g]);
-  }
+  await listSearch(ctx, missing.map((g) => names[g]?.name || g));
   // Second try with a shorter query (brand + first words) for anything still unmatched.
   const short = (g) => {
     const brand = names[g].brand || '';
     return [brand, ...names[g].name.replace(brand, '').trim().split(/\s+/).slice(0, 3)].join(' ').trim();
   };
-  await search(ctx, missing.filter((g) => !cache.byGtin[g] && names[g]?.name).map(short));
+  await listSearch(ctx, missing.filter((g) => !cache.byGtin[g] && names[g]?.name).map(short));
   // Both passes ran without being rate-limited: anything still missing isn't sold there.
   for (const g of missing) if (!cache.byGtin[g]) cache.notFound[g] = Date.now();
 }
@@ -388,7 +397,7 @@ async function apply(ctx) {
     for (const { op } of failed.filter(({ op }) => op.type === 'add')) {
       const staleId = op.item.id;
       evict(cache, op.gtin);
-      try { await search(ctx, [op.label]); } catch { break; } // rate-limited: report the rest as failed
+      try { await listSearch(ctx, [op.label]); } catch { break; } // rate-limited: report the rest as failed
       const fresh = cache.byGtin[op.gtin];
       if (fresh && fresh.id !== staleId) retry.push({ ...op, item: fresh });
     }

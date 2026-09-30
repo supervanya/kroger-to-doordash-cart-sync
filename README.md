@@ -53,16 +53,18 @@ DoorDash's cart doesn't include UPCs, and its search can't look an item up by UP
 first time the extension sees an item, it:
 
 1. Loads your DoorDash **Buy it again** page (one request, about 100 past purchases with UPCs).
-2. Searches the store by name for anything still unmatched, and keeps only the result whose
-   UPC matches exactly.
+2. Searches for everything still unmatched in one go, using DoorDash's own **Shop your list**
+   page ("Search all your items at once"), and keeps only results whose UPC matches exactly.
+   Up to 30 items go in one page request. In testing, one request matched 54 of 56 Kroger
+   items in about 9 seconds.
 
-Every item that comes back is saved as a UPC ↔ DoorDash item match, so later syncs mostly
-skip both steps.
+Every item on those pages is saved as a UPC ↔ DoorDash item match (a single list search
+typically saves several hundred), so later syncs mostly skip both steps.
 
-DoorDash allows only about 20 searches per 5 minutes; after that it blocks search for about
-5 minutes (HTTP 429). The extension stops as soon as it's blocked, saves the matches found so
-far, and tells you when to retry. The next run picks up where it stopped. The first sync of a
-large cart can take one or two rounds of that; later syncs take a few seconds.
+DoorDash's regular search allows only about 20 searches per 5 minutes. A list search is one
+page request however many items it covers, so a typical sync makes one or two requests. If
+DoorDash does block a request (HTTP 429), the extension stops, saves the matches found so far,
+and tells you when to retry.
 
 **DoorDash → Kroger safety check:** if any DoorDash item can't be identified, the sync stops
 and changes nothing. Otherwise the extension would remove that item from Kroger, thinking it
@@ -90,7 +92,7 @@ restarts and aren't affected by clearing kroger.com or doordash.com site data.
 | --- | --- |
 | `background.js` | Finds or opens the tabs, reads both carts, matches items, builds and applies the plan |
 | `lib/kroger.js` | Kroger calls: `GET /atlas/v1/carts`, product names, `PUT /atlas/v1/carts/{id}` |
-| `lib/doordash.js` | DoorDash GraphQL: cart read, store search, add / update / remove |
+| `lib/doordash.js` | DoorDash: cart read and add / update / remove (GraphQL), item lists from store pages (Buy it again, Shop your list) |
 | `lib/sync.js` | Pure diff logic, unit-tested in `lib/sync.test.js` (`npm test`) |
 | `content/kroger-laf-capture.js` | Saves the location header Kroger's product API needs |
 | `popup.html`, `popup.js` | The popup UI |
