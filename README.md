@@ -35,6 +35,23 @@ popup to see its progress, or the finished preview with **Apply changes** ready.
 operation runs at a time. The last result is kept until you start another operation or close
 the browser.
 
+## Compare prices
+
+**Compare prices** opens a page with both carts side by side, one row per UPC:
+
+- Quantity, unit price and line total at each store. Line totals use sale prices, and the
+  regular price is shown crossed out when an item is on sale.
+- Items priced by weight show Kroger's or DoorDash's estimate, marked ≈.
+- For items in only one cart, the other store's current price is shown in italics, so you
+  can see what it would cost there.
+- Totals: each cart's total (Kroger before digital coupons, DoorDash subtotal before fees), plus
+  a **same basket** comparison of every item priced at both stores at your cart quantity.
+  By-weight items are left out of that comparison, because the stores can sell the same
+  produce code by a different unit (Kroger's "bunch of bananas" vs DoorDash's "banana (each)").
+- Filter, show only items in both carts or only one, and sort by biggest price difference.
+- **Download CSV** or **Copy table** (paste into Sheets, Numbers or Excel). The table is also
+  printed with `console.table` in that page's DevTools console.
+
 ## Clear a cart
 
 **Clear Kroger cart** / **Clear DoorDash cart** previews removing every item from that cart,
@@ -108,6 +125,8 @@ restarts and aren't affected by clearing kroger.com or doordash.com site data.
 | `lib/sync.js` | Pure diff logic, unit-tested in `lib/sync.test.js` (`npm test`) |
 | `content/kroger-laf-capture.js` | Saves the location header Kroger's product API needs |
 | `popup.html`, `popup.js` | The popup UI |
+| `prices.html`, `prices.js` | Price comparison page and CSV export |
+| `debug.html`, `debug.js` | Debug page: saved matches, saved carts, last-run timings |
 
 These are the websites' internal APIs, not public ones. If Kroger or DoorDash changes its
 site, a call may break. The popup shows the error message when that happens.

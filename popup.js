@@ -34,6 +34,7 @@ async function showJob(job) {
   if (job.kind === 'preview') await showPreview(job.result);
   else if (job.kind === 'apply') showApplied(job.result);
   else if (job.kind === 'save') await showSaved(job.result, first);
+  else if (job.kind === 'prices') status('Price comparison is ready. Click Compare prices to see it.');
 }
 
 /** Start an operation. Results arrive through the job in session storage, not this reply. */
@@ -175,6 +176,7 @@ loadSaved().then(() => chrome.storage.session.get('job')).then(({ job }) => show
 
 // ---------- misc ----------
 
+$('#prices').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('prices.html') }));
 $('#debug').addEventListener('click', () => chrome.tabs.create({ url: chrome.runtime.getURL('debug.html') }));
 $('#clear').addEventListener('click', async () => {
   await send({ cmd: 'clearCache' });

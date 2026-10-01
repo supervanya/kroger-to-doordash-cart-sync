@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cart sync · Compare prices</title>
+  <style>
+    :root { --fg:#1b1b1f; --muted:#6b6b76; --line:#e4e4ea; --bg:#fff; --panel:#f6f6f8; --kr:#0f4ea6; --dd:#eb1700; --ok:#1a7f37; --bad:#c62828; }
+    @media (prefers-color-scheme: dark) { :root { --fg:#ececf1; --muted:#9a9aa6; --line:#33333b; --bg:#1b1b1f; --panel:#24242a; } }
+    body { font: 13px/1.45 -apple-system, system-ui, sans-serif; color:var(--fg); background:var(--bg); margin:0; padding:20px 24px 40px; }
+    h1 { font-size:18px; margin:0 0 4px; }
+    .muted { color:var(--muted); }
+    .kr { color:var(--kr); } .dd { color:var(--dd); }
+    #status { margin:8px 0; min-height:18px; color:var(--muted); }
+    #status.err { color:var(--bad); }
+    .stats { display:flex; flex-wrap:wrap; gap:10px; margin:14px 0; }
+    .stat { background:var(--panel); border-radius:8px; padding:10px 14px; min-width:170px; }
+    .stat b { display:block; font-size:20px; font-variant-numeric: tabular-nums; }
+    .stat .sub { font-size:12px; color:var(--muted); }
+    .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; }
+    button, select { font:inherit; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--fg); cursor:pointer; }
+    button:hover { border-color:var(--muted); }
+    button:disabled { opacity:.4; cursor:default; }
+    input[type=search] { flex:1; min-width:200px; padding:7px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+    .wrap { overflow-x:auto; }
+    table { border-collapse:collapse; width:100%; }
+    th, td { padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; text-align:right; font-variant-numeric: tabular-nums; }
+    th { font-weight:600; color:var(--muted); position:sticky; top:0; background:var(--bg); }
+    th.l, td.l { text-align:left; }
+    td.name { white-space:normal; min-width:260px; text-align:left; }
+    th.grp { text-align:center; border-bottom:0; }
+    td.sep, th.sep { border-left:1px solid var(--line); }
+    .listed { color:var(--muted); font-style:italic; }
+    .reg { color:var(--muted); text-decoration:line-through; font-size:11px; margin-right:4px; }
+    .tag { font-size:10px; font-weight:600; padding:1px 5px; border-radius:8px; background:var(--panel); color:var(--muted); margin-left:4px; }
+    .cheaper-kr { color:var(--kr); font-weight:600; } .cheaper-dd { color:var(--dd); font-weight:600; }
+    .warn { color:#9a6700; font-size:11px; display:block; }
+    tfoot td { font-weight:600; border-top:2px solid var(--line); }
+  </style>
+</head>
+<body>
+  <h1>Compare prices · <span class="kr">Kroger</span> vs <span class="dd">DoorDash</span></h1>
+  <div class="muted">
+    Line totals are after sale prices. ≈ marks an estimate for items priced by weight.
+    <i>Italic</i> prices are for items not in that cart (the store's current price, shown for comparison).
+    Kroger prices exclude digital coupons; neither includes tax, fees or tips.
+  </div>
+  <div id="status"></div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="bar">
+    <button id="refresh">Refresh prices</button>
+    <button id="csv" disabled>Download CSV</button>
+    <button id="copy" disabled>Copy table (paste into a spreadsheet)</button>
+    <input type="search" id="filter" placeholder="Filter items…" />
+    <select id="show">
+      <option value="all">All items</option>
+      <option value="both">In both carts</option>
+      <option value="kroger">Only in Kroger cart</option>
+      <option value="doordash">Only in DoorDash cart</option>
+    </select>
+    <select id="sort">
+      <option value="name">Sort: name</option>
+      <option value="diff">Sort: biggest price difference</option>
+      <option value="total">Sort: highest line total</option>
+    </select>
+  </div>
+
+  <div class="wrap">
+    <table>
+      <thead>
+        <tr><th></th><th></th><th class="grp sep kr" colspan="3">Kroger</th><th class="grp sep dd" colspan="3">DoorDash</th><th class="sep"></th></tr>
+        <tr>
+          <th class="l">Item</th><th class="l">UPC</th>
+          <th class="sep">Qty</th><th>Unit</th><th>Line total</th>
+          <th class="sep">Qty</th><th>Unit</th><th>Line total</th>
+          <th class="sep">Cheaper per unit</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+      <tfoot id="foot"></tfoot>
+    </table>
+  </div>
+
+  <script src="prices.js"></script>
+</body>
+</html>

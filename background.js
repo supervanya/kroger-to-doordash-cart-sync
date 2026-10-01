@@ -256,7 +256,7 @@ async function readDoorDash(ctx) {
   const missing = d.lines.filter((l) => !ctx.cache.byDdId[l.itemId]);
   if (missing.length) await ctx.loadReorder();
   await listSearch(ctx, missing.filter((l) => !ctx.cache.byDdId[l.itemId]).map((l) => stripSize(l.name)));
-  return { cartId: d.cartId, lines: d.lines.map((l) => ({ ...l, gtin: ctx.cache.byDdId[l.itemId] || null })) };
+  return { cartId: d.cartId, subtotal: d.subtotal, lines: d.lines.map((l) => ({ ...l, gtin: ctx.cache.byDdId[l.itemId] || null })) };
 }
 
 /**
@@ -423,6 +423,76 @@ async function previewClear(ctx, target) {
   return { target, mode: 'clear', label: plan.label, diff: plan.diff, counts: plan.counts };
 }
 
+// ---------- price comparison ----------
+
+const ddEstimated = (purchaseType) => purchaseType === 'PURCHASE_TYPE_UNIT_TO_MEASUREMENT' || purchaseType === 'PURCHASE_TYPE_MEASUREMENT';
+
+/**
+ * Both carts priced side by side, one row per UPC (unidentified DoorDash lines get their own row).
+ * Each side is {qty, unit, total, regularTotal, estimated, listed}: cents; `listed` means the item
+ * isn't in that cart and `unit` is the store's current price for comparison (DoorDash's from the
+ * match cache, so it may be a little out of date). Kroger prices exclude digital coupons.
+ */
+async function comparePrices(ctx) {
+  const k = await readKroger(ctx);
+  const d = await readDoorDash(ctx);
+  const allGtins = [...new Set([...k.lines.map((l) => l.gtin), ...d.lines.map((l) => l.gtin).filter(Boolean)])];
+  const info = await krNames(ctx, allGtins);
+
+  const rows = new Map();
+  const rowFor = (key, gtin, name) => {
+    if (!rows.has(key)) rows.set(key, { gtin, name, kroger: null, doordash: null });
+    return rows.get(key);
+  };
+
+  for (const [g, v] of toCartMap(k.lines.map((l) => ({ gtin: l.gtin, qty: l.qty })))) {
+    const p = info[g] || {};
+    const unit = p.price ?? null;
+    rowFor(g, g, p.name || g).kroger = {
+      qty: v.qty, unit, total: unit == null ? null : unit * v.qty,
+      regularTotal: p.regularPrice != null && unit != null && p.regularPrice > unit ? p.regularPrice * v.qty : null,
+      estimated: p.sellBy === 'Weight', perWeight: p.perWeight, listed: false,
+    };
+  }
+  for (const l of d.lines) {
+    const row = rowFor(l.gtin || `line:${l.lineId}`, l.gtin, l.name);
+    const dd = (row.doordash ||= { qty: 0, unit: l.unitPrice, total: 0, regularTotal: null, estimated: ddEstimated(l.purchaseType), listed: false, name: l.name });
+    dd.qty += l.qty;
+    dd.total += l.lineTotal ?? 0;
+    if (l.regularTotal != null) dd.regularTotal = (dd.regularTotal || 0) + l.regularTotal;
+  }
+  // Fill in the other store's current price for items that are only in one cart.
+  for (const row of rows.values()) {
+    if (!row.gtin) continue;
+    const p = info[row.gtin];
+    if (!row.kroger && p?.price != null) row.kroger = { qty: 0, unit: p.price, total: null, estimated: p.sellBy === 'Weight', perWeight: p.perWeight, listed: true };
+    const c = ctx.cache.byGtin[row.gtin];
+    if (!row.doordash && c?.price != null) row.doordash = { qty: 0, unit: c.price, total: null, estimated: ddEstimated(c.purchaseType), listed: true, name: c.name };
+  }
+
+  const list = [...rows.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const sum = (side) => list.reduce((n, r) => n + (r[side] && !r[side].listed ? r[side].total || 0 : 0), 0);
+  // Same basket: every item priced at both stores, at the quantity in your cart (Kroger's if in both).
+  // Items priced by weight are left out: the stores can sell the same produce code by a different
+  // unit (Kroger "bunch of bananas" vs DoorDash "banana (each)"), so their prices don't compare.
+  const basket = { items: 0, kroger: 0, doordash: 0, excluded: 0, byWeight: 0 };
+  for (const r of list) {
+    if (r.kroger?.unit == null || r.doordash?.unit == null) { basket.excluded++; continue; }
+    if (r.kroger.estimated || r.doordash.estimated) { basket.byWeight++; continue; }
+    const q = r.kroger.qty || r.doordash.qty;
+    basket.items++;
+    basket.kroger += r.kroger.unit * q;
+    basket.doordash += r.doordash.unit * q;
+  }
+  return {
+    at: Date.now(),
+    kroger: { lines: k.lines.length, total: sum('kroger') },
+    doordash: { lines: d.lines.length, total: d.subtotal ?? sum('doordash') },
+    basket,
+    rows: list,
+  };
+}
+
 const rebuild = (ctx, redo) => (redo.kind === 'sync' ? previewSync(ctx, redo.dir)
   : redo.kind === 'clear' ? previewClear(ctx, redo.target) : previewSaved(ctx, redo));
 
@@ -507,6 +577,7 @@ const op = (kind, desc, fn) => startJob(kind, desc, () => withCtx(desc, fn));
 
 const handlers = {
   preview: (msg) => op('preview', `Sync preview (${msg.dir === 'k2d' ? 'Kroger → DoorDash' : 'DoorDash → Kroger'})`, timed((ctx) => previewSync(ctx, msg.dir))),
+  prices: () => op('prices', 'Compare prices', comparePrices),
   previewClear: (msg) => op('preview', `Clear ${STORE_NAME[msg.target]} cart (preview)`, timed((ctx) => previewClear(ctx, msg.target))),
   previewSaved: (msg) => op('preview', `Saved cart preview (${msg.mode === 'add' ? 'add to' : 'restore'} ${STORE_NAME[msg.target]})`, timed((ctx) => previewSaved(ctx, msg))),
   apply: () => op('apply', 'Apply changes', apply),
