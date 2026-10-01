@@ -498,6 +498,8 @@ const rebuild = (ctx, redo) => (redo.kind === 'sync' ? previewSync(ctx, redo.dir
 
 // ---------- apply ----------
 
+const krRemoval = (line) => ({ id: line.id, quantity: 0, gtin13: line.gtin13, modalityType: line.modalityType });
+
 async function apply(ctx) {
   const t0 = Date.now();
   const { plan } = await chrome.storage.session.get('plan');
@@ -544,12 +546,13 @@ async function apply(ctx) {
     const byGtin = {};
     for (const l of plan.kLines) (byGtin[l.gtin] ||= []).push(l.line);
     const lineItems = [];
-    for (const a of diff.add) lineItems.push({ gtin13: a.gtin, quantity: a.qty, modalityType: 'DELIVERY', substitutionPolicy: 'SHOPPER_CHOICE', savedForLater: false });
+    // Same shapes kroger.com sends: new items by gtin13 with channel WEB; removals as quantity 0.
+    for (const a of diff.add) lineItems.push({ gtin13: a.gtin, quantity: a.qty, channel: 'WEB', modalityType: 'DELIVERY', substitutionPolicy: 'SHOPPER_CHOICE' });
     for (const c of diff.change) {
       const [first, ...dupes] = byGtin[c.gtin];
-      lineItems.push({ ...first, quantity: c.to }, ...dupes.map((x) => ({ ...x, quantity: 0 })));
+      lineItems.push({ ...first, quantity: c.to }, ...dupes.map(krRemoval));
     }
-    for (const r of diff.remove) for (const x of byGtin[r.gtin]) lineItems.push({ ...x, quantity: 0 });
+    for (const r of diff.remove) lineItems.push(...byGtin[r.gtin].map(krRemoval));
     if (lineItems.length) {
       const kTab = await ctx.kTab();
       try {
